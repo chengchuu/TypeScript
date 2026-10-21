@@ -50,6 +50,7 @@ func (tr *lifecycleTestTransport) Write(message *lsproto.Message) error {
 	case err := <-tr.writeErrors:
 		return err
 	default:
+		// No injected failure; deliver the message normally.
 	}
 	select {
 	case tr.output <- message:
@@ -60,6 +61,8 @@ func (tr *lifecycleTestTransport) Write(message *lsproto.Message) error {
 }
 
 func TestServerExitLifecycle(t *testing.T) {
+	t.Parallel()
+
 	for _, mode := range []string{"shutdown-exit", "exit", "cancel", "read-error", "write-error", "shutdown-eof"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
@@ -87,6 +90,7 @@ func TestServerExitLifecycle(t *testing.T) {
 				t.Helper()
 				select {
 				case transport.input <- lifecycleTestRead{message: message}:
+					// The message is queued for the server.
 				case <-timeout.Done():
 					t.Fatal("timed out sending message")
 				}
@@ -100,12 +104,14 @@ func TestServerExitLifecycle(t *testing.T) {
 							reply := (&lsproto.ResponseMessage{ID: message.AsRequest().ID, Result: lsproto.Null{}}).Message()
 							select {
 							case transport.input <- lifecycleTestRead{message: reply}:
+								// The reply is queued for the server.
 							case <-timeout.Done():
 								return
 							}
 						} else if message.Kind == jsonrpc.MessageKindResponse {
 							select {
 							case responses <- message.AsResponse():
+								// The response is queued for the test.
 							case <-timeout.Done():
 								return
 							}
@@ -133,6 +139,7 @@ func TestServerExitLifecycle(t *testing.T) {
 			send(lsproto.InitializedInfo.NewNotificationMessage(&lsproto.InitializedParams{}).Message())
 			select {
 			case <-server.initComplete:
+				// Initialization completed; exercise the termination path.
 			case <-timeout.Done():
 				t.Fatal("timed out initializing")
 			}
