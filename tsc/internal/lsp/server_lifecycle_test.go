@@ -33,6 +33,7 @@ func (tr *lifecycleTestTransport) Read() (*lsproto.Message, error) {
 		if read.err != nil {
 			return nil, read.err
 		}
+		// Decode params as they would arrive over the wire.
 		data, err := json.Marshal(read.message)
 		if err != nil {
 			return nil, err
@@ -50,7 +51,7 @@ func (tr *lifecycleTestTransport) Write(message *lsproto.Message) error {
 	case err := <-tr.writeErrors:
 		return err
 	default:
-		// No injected failure; deliver the message normally.
+		// No write error injected.
 	}
 	select {
 	case tr.output <- message:
@@ -63,39 +64,45 @@ func (tr *lifecycleTestTransport) Write(message *lsproto.Message) error {
 func TestServerExitLifecycle(t *testing.T) {
 	t.Parallel()
 
+	if !bundled.Embedded {
+		t.Skip("bundled files are not embedded")
+	}
+
 	for _, mode := range []string{"shutdown-exit", "exit", "cancel", "read-error", "write-error", "shutdown-eof"} {
 		t.Run(mode, func(t *testing.T) {
 			t.Parallel()
-			if !bundled.Embedded {
-				t.Skip("bundled files are not embedded")
-			}
-			timeout, stop := context.WithTimeout(t.Context(), 10*time.Second)
-			defer stop()
-			ctx, cancel := context.WithCancel(timeout)
+			timeoutCtx, stopTimeout := context.WithTimeout(t.Context(), 10*time.Second)
+			defer stopTimeout()
+			ctx, cancel := context.WithCancel(timeoutCtx)
 			defer cancel()
 			transport := &lifecycleTestTransport{
 				writeErrors: make(chan error, 1),
 				input:       make(chan lifecycleTestRead, 1),
 				output:      make(chan *lsproto.Message, 16),
-				done:        timeout.Done(),
+				done:        timeoutCtx.Done(),
 			}
 			server := NewServer(&ServerOptions{
-				In: transport, Out: transport, Err: io.Discard, Cwd: "/test",
+				In:                 transport,
+				Out:                transport,
+				Err:                io.Discard,
+				Cwd:                "/test",
 				FS:                 bundled.WrapFS(vfstest.FromMap(map[string]string{"/test/tsconfig.json": "{}"}, tspath.CaseInsensitive)),
 				DefaultLibraryPath: bundled.LibPath(),
 			})
-			finished := make(chan error, 1)
-			go func() { finished <- server.Run(ctx) }()
+			runErr := make(chan error, 1)
+			go func() { runErr <- server.Run(ctx) }()
 			send := func(message *lsproto.Message) {
 				t.Helper()
 				select {
 				case transport.input <- lifecycleTestRead{message: message}:
 					// The message is queued for the server.
-				case <-timeout.Done():
+				case <-timeoutCtx.Done():
 					t.Fatal("timed out sending message")
 				}
 			}
+
 			responses := make(chan *lsproto.ResponseMessage, 1)
+			// Answer server requests and forward responses to the test.
 			go func() {
 				for {
 					select {
@@ -105,51 +112,52 @@ func TestServerExitLifecycle(t *testing.T) {
 							select {
 							case transport.input <- lifecycleTestRead{message: reply}:
 								// The reply is queued for the server.
-							case <-timeout.Done():
+							case <-timeoutCtx.Done():
 								return
 							}
 						} else if message.Kind == jsonrpc.MessageKindResponse {
 							select {
 							case responses <- message.AsResponse():
 								// The response is queued for the test.
-							case <-timeout.Done():
+							case <-timeoutCtx.Done():
 								return
 							}
 						}
-					case <-timeout.Done():
+					case <-timeoutCtx.Done():
 						return
 					}
 				}
 			}()
-			response := func(id *jsonrpc.ID) {
+			waitForResponse := func(id *jsonrpc.ID) {
 				t.Helper()
 				select {
 				case message := <-responses:
 					if message.ID == nil || *message.ID != *id || message.Error != nil {
 						t.Fatalf("unexpected response: %+v", message)
 					}
-				case <-timeout.Done():
+				case <-timeoutCtx.Done():
 					t.Fatal("timed out waiting for response")
 				}
 			}
 
 			initID := jsonrpc.NewIDString("initialize")
 			send(lsproto.InitializeInfo.NewRequestMessage(initID, &lsproto.InitializeParams{Capabilities: &lsproto.ClientCapabilities{}}).Message())
-			response(initID)
+			waitForResponse(initID)
 			send(lsproto.InitializedInfo.NewNotificationMessage(&lsproto.InitializedParams{}).Message())
 			select {
 			case <-server.initComplete:
 				// Initialization completed; exercise the termination path.
-			case <-timeout.Done():
+			case <-timeoutCtx.Done():
 				t.Fatal("timed out initializing")
 			}
 			defer server.session.Close()
+
 			var want error
 			switch mode {
 			case "shutdown-exit", "shutdown-eof":
 				id := jsonrpc.NewIDString("shutdown")
 				send((&lsproto.RequestMessage{ID: id, Method: lsproto.MethodShutdown}).Message())
-				response(id)
+				waitForResponse(id)
 				if mode == "shutdown-eof" {
 					transport.input <- lifecycleTestRead{err: io.EOF}
 				} else {
@@ -171,11 +179,11 @@ func TestServerExitLifecycle(t *testing.T) {
 				transport.input <- lifecycleTestRead{err: want}
 			}
 			select {
-			case err := <-finished:
+			case err := <-runErr:
 				if !errors.Is(err, want) {
 					t.Fatalf("Run() = %v, want %v", err, want)
 				}
-			case <-timeout.Done():
+			case <-timeoutCtx.Done():
 				t.Fatal("server did not exit")
 			}
 		})
