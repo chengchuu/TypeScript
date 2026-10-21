@@ -222,7 +222,8 @@ type Server struct {
 
 	lastRequestTimeMs atomic.Int64
 
-	session *project.Session
+	session          *project.Session
+	shutdownComplete bool
 
 	// apiSessions holds active API sessions keyed by their ID
 	apiSessions   map[string]*apiSessionState
@@ -1008,7 +1009,7 @@ func (s *Server) dispatchLoop(ctx context.Context) error {
 	for {
 		req, err := s.requestQueue.Get(ctx)
 		if err != nil {
-			return err
+			return context.Cause(ctx)
 		}
 
 		s.lastRequestTimeMs.Store(time.Now().UnixMilli())
@@ -1030,7 +1031,12 @@ func (s *Server) dispatchLoop(ctx context.Context) error {
 					lspExit(err)
 				}
 			} else if errors.Is(err, io.EOF) {
-				lspExit(nil)
+				if req.Method == lsproto.MethodExit && s.shutdownComplete {
+					// Preserve graceful exit through cancellation of the dispatch loop.
+					lspExit(io.EOF)
+				} else {
+					lspExit(nil)
+				}
 			} else {
 				if err := s.sendError(req.ID, err); err != nil {
 					lspExit(err)
@@ -1834,6 +1840,7 @@ func (s *Server) handleShutdown(ctx context.Context, _ lsproto.NoParams, _ *lspr
 	}
 	s.closeAPISessions()
 	s.session.Close()
+	s.shutdownComplete = true
 	return lsproto.ShutdownResponse{}, nil
 }
 
