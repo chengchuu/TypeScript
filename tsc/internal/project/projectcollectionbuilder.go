@@ -1173,8 +1173,8 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 						return true
 					}
 					configPath := b.toPathKey(node.configFileName)
-					entry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(configPath))
-					if !ok || entry.Value().IsDirty() {
+					projectEntry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(configPath))
+					if !ok || projectEntry.Value().IsDirty() {
 						return true
 					}
 					configEntry, ok := b.configFileRegistryBuilder.configs.Load(configPath)
@@ -1182,7 +1182,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 						return true
 					}
 					config := configEntry.Value().commandLine
-					project := entry.Value()
+					project := projectEntry.Value()
 					if config == nil || project.CommandLine != config || len(config.FileNames()) == 0 {
 						return true
 					}

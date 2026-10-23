@@ -107,15 +107,16 @@ func (m *OrderedMap[K, V]) Delete(key K) (V, bool) {
 	}
 
 	delete(m.mp, key)
+
 	// Avoid scanning the keys when removing entries from the end.
-	if end := len(m.keys) - 1; m.keys[end] == key {
+	if last := len(m.keys) - 1; m.keys[last] == key {
 		var zero K
-		m.keys[end] = zero
-		m.keys = m.keys[:end]
+		m.keys[last] = zero
+		m.keys = m.keys[:last]
 		return v, true
 	}
+
 	i := slices.Index(m.keys, key)
-	// Removing the first key does not require shifting the remaining keys.
 	if i == 0 {
 		var zero K
 		m.keys[0] = zero
