@@ -29,13 +29,15 @@ func TestProjectCollectionBuilder(t *testing.T) {
 		t.Parallel()
 		synctest.Test(t, func(t *testing.T) {
 			files := map[string]any{
-				"/project/tsconfig.json":      `{"files": [], "references": [{"path": "./tsconfig.app.json"}, {"path": "./tsconfig.node.json"}]}`,
-				"/project/tsconfig.app.json":  `{"include": ["src"]}`,
-				"/project/tsconfig.node.json": `{"files": ["vite.config.ts"]}`,
-				"/project/vite.config.ts":     `export default {};`,
-				"/project/src/a.ts":           `export const a = 1;`,
-				"/project/src/b.ts":           `export const b = 2;`,
-				"/project/src/c.ts":           `export const c = 3;`,
+				"/project/tsconfig.json":       `{"files": [], "references": [{"path": "./tsconfig.app.json"}, {"path": "./tsconfig.node.json"}, {"path": "./tsconfig.tools.json"}]}`,
+				"/project/tsconfig.app.json":   `{"include": ["src"]}`,
+				"/project/tsconfig.node.json":  `{"files": ["vite.config.ts"]}`,
+				"/project/vite.config.ts":      `export default {};`,
+				"/project/tsconfig.tools.json": `{"files": ["tools.ts"]}`,
+				"/project/tools.ts":            `export {};`,
+				"/project/src/a.ts":            `export const a = 1;`,
+				"/project/src/b.ts":            `export const b = 2;`,
+				"/project/src/c.ts":            `export const c = 3;`,
 			}
 			session, utils := projecttestutil.Setup(files)
 			defer session.Close()
@@ -53,6 +55,7 @@ func TestProjectCollectionBuilder(t *testing.T) {
 				synctest.Wait()
 				if i > 0 {
 					assert.Equal(t, strings.Count(utils.Logs()[logStart:], "Program update for /project/tsconfig.node.json completed"), 0)
+					assert.Equal(t, strings.Count(utils.Logs()[logStart:], "Program update for /project/tsconfig.tools.json completed"), 0)
 				}
 				session.DidCloseFile(context.Background(), uri)
 			}

@@ -1162,10 +1162,11 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 				// A clean loaded project gives an upper bound on the winning index.
 				// Keep earlier candidates in parallel to preserve reference precedence.
 				found := false
+				var trailingKeys []searchNodeKey
 				level.Range(func(node searchNode) bool {
 					key := searchNodeKey{configFileName: node.configFileName, loadKind: node.loadKind}
 					if found {
-						level.Delete(key)
+						trailingKeys = append(trailingKeys, key)
 						return true
 					}
 					if visited.Has(key) {
@@ -1191,6 +1192,10 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					found = project.containsFile(path) && !project.IsSourceFromProjectReference(path)
 					return true
 				})
+				// Delete after iteration, from the end to avoid shifting remaining entries.
+				for _, key := range slices.Backward(trailingKeys) {
+					level.Delete(key)
+				}
 			},
 		},
 		func(node searchNode) searchNodeKey {
