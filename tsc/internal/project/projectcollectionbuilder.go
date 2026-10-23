@@ -1159,13 +1159,13 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					}
 					return true
 				})
-				// A clean loaded project gives an upper bound on the winning index.
-				// Keep earlier candidates in parallel to preserve reference precedence.
-				found := false
+				// Skip later candidates once a clean loaded project contains the file.
+				// Keep earlier candidates in parallel to preserve reference order.
+				foundMatch := false
 				var trailingKeys []searchNodeKey
 				level.Range(func(node searchNode) bool {
 					key := searchNodeKey{configFileName: node.configFileName, loadKind: node.loadKind}
-					if found {
+					if foundMatch {
 						trailingKeys = append(trailingKeys, key)
 						return true
 					}
@@ -1189,10 +1189,11 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					if config.CompilerOptions().Composite.IsTrue() && !config.FilePaths().Has(path) {
 						return true
 					}
-					found = project.containsFile(path) && !project.IsSourceFromProjectReference(path)
+					foundMatch = project.containsFile(path) && !project.IsSourceFromProjectReference(path)
 					return true
 				})
-				// Delete after iteration, from the end to avoid shifting remaining entries.
+				// Delete after traversal so entries are not skipped.
+				// Removing from the end keeps pruning linear.
 				for _, key := range slices.Backward(trailingKeys) {
 					level.Delete(key)
 				}

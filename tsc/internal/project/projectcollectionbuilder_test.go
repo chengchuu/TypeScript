@@ -105,18 +105,26 @@ func TestProjectCollectionBuilder(t *testing.T) {
 			want        tspath.RootedFilePath
 		}{
 			{
-				name: "earlier candidate wins over cached later match", firstConfig: `{"files": ["main.ts"]}`,
-				warmFile: "anchor.ts", want: "/project/first.json",
+				name:        "earlier candidate wins over cached later match",
+				firstConfig: `{"files": ["main.ts"]}`,
+				warmFile:    "anchor.ts",
+				want:        "/project/first.json",
 			},
 			{
-				name: "config change invalidates cached match", firstConfig: `{"files": ["entry.ts", "main.ts"]}`,
-				warmFile: "entry.ts", changedFile: "/project/first.json", newContent: `{"files": ["other.ts"]}`,
-				want: "/project/second.json",
+				name:        "config change invalidates cached match",
+				firstConfig: `{"files": ["entry.ts", "main.ts"]}`,
+				warmFile:    "entry.ts",
+				changedFile: "/project/first.json",
+				newContent:  `{"files": ["other.ts"]}`,
+				want:        "/project/second.json",
 			},
 			{
-				name: "source change invalidates cached match", firstConfig: `{"files": ["entry.ts"]}`,
-				warmFile: "entry.ts", changedFile: "/project/entry.ts", newContent: `export {};`,
-				want: "/project/second.json",
+				name:        "source change invalidates cached match",
+				firstConfig: `{"files": ["entry.ts"]}`,
+				warmFile:    "entry.ts",
+				changedFile: "/project/entry.ts",
+				newContent:  `export {};`,
+				want:        "/project/second.json",
 			},
 		} {
 			t.Run(test.name, func(t *testing.T) {
