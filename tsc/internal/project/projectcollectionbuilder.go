@@ -1159,6 +1159,38 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					}
 					return true
 				})
+				// A clean loaded project gives an upper bound on the winning index.
+				// Keep earlier candidates in parallel to preserve reference precedence.
+				found := false
+				level.Range(func(node searchNode) bool {
+					key := searchNodeKey{configFileName: node.configFileName, loadKind: node.loadKind}
+					if found {
+						level.Delete(key)
+						return true
+					}
+					if visited.Has(key) {
+						return true
+					}
+					configPath := b.toPathKey(node.configFileName)
+					entry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(configPath))
+					if !ok || entry.Value().IsDirty() {
+						return true
+					}
+					configEntry, ok := b.configFileRegistryBuilder.configs.Load(configPath)
+					if !ok || configEntry.Value().pendingReload != PendingReloadNone {
+						return true
+					}
+					config := configEntry.Value().commandLine
+					project := entry.Value()
+					if config == nil || project.CommandLine != config || len(config.FileNames()) == 0 {
+						return true
+					}
+					if config.CompilerOptions().Composite.IsTrue() && !config.FilePaths().Has(path) {
+						return true
+					}
+					found = project.containsFile(path) && !project.IsSourceFromProjectReference(path)
+					return true
+				})
 			},
 		},
 		func(node searchNode) searchNodeKey {
