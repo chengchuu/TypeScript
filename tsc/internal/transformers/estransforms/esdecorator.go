@@ -786,12 +786,34 @@ func (tx *esDecoratorTransformer) transformClassLike(node *ast.Node) *ast.Expres
 	// 10. Class binding is initialized
 	//
 	// produces:
-	//   __esDecorate(null, _classDescriptor = { value: this }, _classDecorators, { kind: "class", name: this.name, metadata }, null, _classExtraInitializers);
+	//   __esDecorate(null, _classDescriptor = { value: this }, _classDecorators, { kind: "class", name: "C", metadata }, null, _classExtraInitializers);
 	if ci.classDescriptorName != nil && ci.classDecoratorsName != nil && ci.classExtraInitializersName != nil && ci.classThis != nil {
 		valueProperty := f.NewPropertyAssignment(nil, f.NewIdentifier("value"), nil, nil, renamedClassThis)
 		classDescriptor := f.NewObjectLiteralExpression(f.NewNodeList([]*ast.Node{valueProperty}), false)
 		classDescriptorAssignment := f.NewAssignmentExpression(ci.classDescriptorName, classDescriptor)
-		classNameReference := f.NewPropertyAccessExpression(renamedClassThis, nil, f.NewIdentifier("name"), ast.NodeFlagsNone)
+		// A static name member must not supply the class decorator's context name.
+		classNameReference := ec.AssignedName(node)
+		if name := node.Name(); name != nil && !transformers.IsGeneratedIdentifier(ec, name) {
+			classNameReference = f.NewStringLiteralFromNode(name)
+		} else if classNameReference == nil {
+			classNameReference = f.NewStringLiteral("", 0)
+		} else if !ast.IsStringLiteral(classNameReference) {
+			// Computed property keys are already evaluated; normalize symbols as __setFunctionName does.
+			description := f.NewPropertyAccessExpression(classNameReference, nil, f.NewIdentifier("description"), ast.NodeFlagsNone)
+			classNameReference = f.NewConditionalExpression(
+				f.NewTypeCheck(classNameReference, "symbol"),
+				f.NewToken(ast.KindQuestionToken),
+				f.NewConditionalExpression(
+					description,
+					f.NewToken(ast.KindQuestionToken),
+					f.NewMethodCall(f.NewStringLiteral("[", 0), f.NewIdentifier("concat"), []*ast.Expression{description, f.NewStringLiteral("]", 0)}),
+					f.NewToken(ast.KindColonToken),
+					f.NewStringLiteral("", 0),
+				),
+				f.NewToken(ast.KindColonToken),
+				classNameReference,
+			)
+		}
 
 		contextObj := f.NewESDecorateClassContextObject(classNameReference, ci.metadataReference)
 

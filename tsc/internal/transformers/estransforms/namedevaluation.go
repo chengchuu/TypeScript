@@ -9,7 +9,7 @@ import (
 )
 
 /**
- * Gets whether a node is a `static {}` block containing only a single call to the `__setFunctionName` helper where that
+ * Gets whether a node is a `static {}` block containing a possibly guarded call to the `__setFunctionName` helper where that
  * call's second argument is the value stored in the `assignedName` property of the block's `EmitNode`.
  * @internal
  */
@@ -21,6 +21,9 @@ func isClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, node *a
 	statement := node.AsClassStaticBlockDeclaration().Body.Statements()[0]
 	if ast.IsExpressionStatement(statement) {
 		expression := statement.Expression()
+		if ast.IsBinaryExpression(expression) && expression.AsBinaryExpression().OperatorToken.Kind == ast.KindAmpersandAmpersandToken {
+			expression = expression.AsBinaryExpression().Right
+		}
 		if emitContext.IsCallToHelper(expression, "__setFunctionName") {
 			arguments := expression.AsCallExpression().Arguments
 			return len(arguments.Nodes) >= 2 &&
@@ -150,7 +153,7 @@ func getAssignedNameOfPropertyName(emitContext *printer.EmitContext, name *ast.P
 // side effects.
 // The thisExpression parameter overrides the expression to use for the actual `this` reference. This can be used to provide an
 // expression that has already had its `EmitFlags` set or may have been tracked to prevent substitution.
-func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, assignedName *ast.Expression, thisExpression *ast.Expression) *ast.Node {
+func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, assignedName *ast.Expression, thisExpression *ast.Expression, condition *ast.Expression) *ast.Node {
 	// produces:
 	//
 	//  static { __setFunctionName(this, "C"); }
@@ -162,6 +165,9 @@ func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, ass
 
 	factory := emitContext.Factory
 	expression := factory.NewSetFunctionNameHelper(thisExpression, assignedName, "" /*prefix*/)
+	if condition != nil {
+		expression = factory.NewLogicalANDExpression(condition, expression)
+	}
 	statement := factory.NewExpressionStatement(expression)
 	body := factory.NewBlock(factory.NewNodeList([]*ast.Statement{statement}), false /*multiLine*/)
 	block := factory.NewClassStaticBlockDeclaration(nil /*modifiers*/, body)
@@ -197,16 +203,45 @@ func injectClassNamedEvaluationHelperBlockIfMissing(
 	}
 
 	factory := emitContext.Factory
-	namedEvaluationBlock := createClassNamedEvaluationHelperBlock(emitContext, assignedName, thisExpression)
+	memberNodes := slices.Clone(node.Members())
+	var condition *ast.Expression
+	for i, member := range memberNodes {
+		if !ast.HasStaticModifier(member) || !(ast.IsMethodOrAccessor(member) || ast.IsAutoAccessorPropertyDeclaration(member)) || ast.IsPrivateIdentifier(member.Name()) {
+			continue
+		}
+		name := member.Name()
+		key, updatedName := getAssignedNameOfPropertyName(emitContext, name, "")
+		if ast.IsStringLiteral(key) {
+			if key.Text() == "name" {
+				condition = factory.NewFalseExpression()
+				break
+			}
+			continue
+		}
+		// Cache computed keys in their original evaluation position, before any static blocks run.
+		memberNodes[i] = emitContext.NewNodeVisitor(func(child *ast.Node) *ast.Node {
+			if child == name {
+				return updatedName
+			}
+			return child
+		}).VisitEachChild(member)
+		keyIsNotName := factory.NewStrictInequalityExpression(key, factory.NewStringLiteral("name", 0))
+		if condition == nil {
+			condition = keyIsNotName
+		} else {
+			condition = factory.NewLogicalANDExpression(condition, keyIsNotName)
+		}
+	}
+	namedEvaluationBlock := createClassNamedEvaluationHelperBlock(emitContext, assignedName, thisExpression, condition)
 	if node.Name() != nil {
 		emitContext.SetSourceMapRange(namedEvaluationBlock.Body().Statements()[0], node.Name().Loc)
 	}
 
-	insertionIndex := slices.IndexFunc(node.Members(), func(n *ast.Node) bool {
+	insertionIndex := slices.IndexFunc(memberNodes, func(n *ast.Node) bool {
 		return isClassThisAssignmentBlock(emitContext, n)
 	}) + 1
-	leading := slices.Clone(node.Members()[:insertionIndex])
-	trailing := slices.Clone(node.Members()[insertionIndex:])
+	leading := memberNodes[:insertionIndex]
+	trailing := memberNodes[insertionIndex:]
 
 	var members []*ast.ClassElement
 	members = append(members, leading...)
