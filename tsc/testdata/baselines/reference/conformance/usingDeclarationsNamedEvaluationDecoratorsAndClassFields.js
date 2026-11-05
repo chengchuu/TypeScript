@@ -59,9 +59,6 @@ var __runInitializers = (this && this.__runInitializers) || function (thisArg, i
     }
     return useValue ? value : void 0;
 };
-var __propKey = (this && this.__propKey) || function (x) {
-    return typeof x === "symbol" ? x : "".concat(x);
-};
 var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
     if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
     return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
@@ -119,18 +116,18 @@ var __disposeResources = (this && this.__disposeResources) || (function (Suppres
     return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
 });
 var _a, _b;
-var _c, C1, _d, C2, _e, C3, _f, C4;
+var C1, C2, C3, C4;
 const env_1 = { stack: [], error: void 0, hasError: false };
 try {
     C1 = __addDisposableResource(env_1, (_a = class {
-            static [_c = __propKey(Symbol.dispose)]() { }
+            static [Symbol.dispose]() { }
         },
-        _c !== "name" && __setFunctionName(_a, "C1"),
+        {}.constructor.getOwnPropertyDescriptor(_a, "name").writable === false && __setFunctionName(_a, "C1"),
         _a), false);
     C2 = __addDisposableResource(env_1, (_b = class {
-            static [_d = __propKey(Symbol.dispose)]() { }
+            static [Symbol.dispose]() { }
         },
-        _d !== "name" && __setFunctionName(_b, "C2"),
+        {}.constructor.getOwnPropertyDescriptor(_b, "name").writable === false && __setFunctionName(_b, "C2"),
         _b.x = 1,
         _b), false);
     C3 = __addDisposableResource(env_1, (() => {
@@ -139,9 +136,9 @@ try {
         let _classExtraInitializers = [];
         let _classThis;
         var class_1 = _classThis = class {
-            static [_e = __propKey(Symbol.dispose)]() { }
+            static [Symbol.dispose]() { }
         };
-        _e !== "name" && __setFunctionName(_classThis, "C3");
+        ({}.constructor.getOwnPropertyDescriptor(_classThis, "name").writable === false && __setFunctionName(_classThis, "C3"));
         (() => {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: "C3", metadata: _metadata }, null, _classExtraInitializers);
@@ -157,9 +154,9 @@ try {
         let _classExtraInitializers = [];
         let _classThis;
         var class_2 = _classThis = class {
-            static [_f = __propKey(Symbol.dispose)]() { }
+            static [Symbol.dispose]() { }
         };
-        _f !== "name" && __setFunctionName(_classThis, "C4");
+        ({}.constructor.getOwnPropertyDescriptor(_classThis, "name").writable === false && __setFunctionName(_classThis, "C4"));
         (() => {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: "C4", metadata: _metadata }, null, _classExtraInitializers);

@@ -203,33 +203,34 @@ func injectClassNamedEvaluationHelperBlockIfMissing(
 	}
 
 	factory := emitContext.Factory
-	memberNodes := slices.Clone(node.Members())
+	memberNodes := node.Members()
 	var condition *ast.Expression
-	for i, member := range memberNodes {
+	for _, member := range memberNodes {
 		if !ast.HasStaticModifier(member) || !(ast.IsMethodOrAccessor(member) || ast.IsAutoAccessorPropertyDeclaration(member)) || ast.IsPrivateIdentifier(member.Name()) {
 			continue
 		}
 		name := member.Name()
-		key, updatedName := getAssignedNameOfPropertyName(emitContext, name, "")
-		if ast.IsStringLiteral(key) {
-			if key.Text() == "name" {
-				condition = factory.NewFalseExpression()
-				break
+		if ast.IsComputedPropertyName(name) {
+			name = name.Expression()
+			if !ast.IsPropertyNameLiteral(name) || ast.IsIdentifier(name) {
+				if condition == nil {
+					// Methods are writable and accessors omit writable. Only the built-in name is non-writable.
+					// Reach Object through a literal because a local binding can shadow the global name.
+					object := factory.NewPropertyAccessExpression(factory.NewObjectLiteralExpression(nil, false), nil, factory.NewIdentifier("constructor"), ast.NodeFlagsNone)
+					receiver := thisExpression
+					if receiver == nil {
+						receiver = factory.NewThisExpression()
+					}
+					descriptor := factory.NewMethodCall(object, factory.NewIdentifier("getOwnPropertyDescriptor"), []*ast.Expression{receiver, factory.NewStringLiteral("name", 0)})
+					writable := factory.NewPropertyAccessExpression(descriptor, nil, factory.NewIdentifier("writable"), ast.NodeFlagsNone)
+					condition = factory.NewStrictEqualityExpression(writable, factory.NewFalseExpression())
+				}
+				continue
 			}
-			continue
 		}
-		// Cache computed keys in their original evaluation position, before any static blocks run.
-		memberNodes[i] = emitContext.NewNodeVisitor(func(child *ast.Node) *ast.Node {
-			if child == name {
-				return updatedName
-			}
-			return child
-		}).VisitEachChild(member)
-		keyIsNotName := factory.NewStrictInequalityExpression(key, factory.NewStringLiteral("name", 0))
-		if condition == nil {
-			condition = keyIsNotName
-		} else {
-			condition = factory.NewLogicalANDExpression(condition, keyIsNotName)
+		if name.Text() == "name" {
+			condition = factory.NewFalseExpression()
+			break
 		}
 	}
 	namedEvaluationBlock := createClassNamedEvaluationHelperBlock(emitContext, assignedName, thisExpression, condition)

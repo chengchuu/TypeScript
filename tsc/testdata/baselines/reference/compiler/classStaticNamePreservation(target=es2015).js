@@ -73,6 +73,33 @@ export function computed() {
     check(coercions, 1);
 }
 
+export function symbolFromComputedKey() {
+    const token = Symbol("member");
+    let coercions = 0;
+    const key = { [Symbol.toPrimitive](hint: string) {
+        check(hint, "string");
+        coercions++;
+        return token;
+    } };
+    const C = class {
+        static [key as unknown as symbol]() { return 42; }
+        static {}
+    };
+    check(Reflect.get(C, token)(), 42);
+    check(coercions, 1);
+    check(C.name, "C");
+}
+
+export function boxedSymbolComputedKey() {
+    const key = Object(Symbol.iterator);
+    const C = class {
+        static [key]() { return 42; }
+        static {}
+    };
+    check(Reflect.get(C, Symbol.iterator)(), 42);
+    check(C.name, "C");
+}
+
 export function multipleComputedMembers() {
     const events: string[] = [];
     const key = { toString() { events.push("name"); return "name"; } };
@@ -233,6 +260,8 @@ exports.declared = declared;
 exports.inferred = inferred;
 exports.methodAndSetter = methodAndSetter;
 exports.computed = computed;
+exports.symbolFromComputedKey = symbolFromComputedKey;
+exports.boxedSymbolComputedKey = boxedSymbolComputedKey;
 exports.multipleComputedMembers = multipleComputedMembers;
 exports.memberDecorator = memberDecorator;
 exports.symbols = symbols;
@@ -363,7 +392,7 @@ function methodAndSetter() {
     check(value, 123);
 }
 function computed() {
-    var _a, _b;
+    var _a;
     let keys = 0;
     let coercions = 0;
     const key = { toString() { coercions++; return "item"; } };
@@ -374,9 +403,9 @@ function computed() {
             let _classExtraInitializers = [];
             let _classThis;
             var class_4 = _classThis = class {
-                static get [_b = __propKey((keys++, "name"))]() { return 123; }
+                static get [(keys++, "name")]() { return 123; }
             };
-            _b !== "name" && __setFunctionName(_classThis, _a);
+            ({}.constructor.getOwnPropertyDescriptor(_classThis, "name").writable === false && __setFunctionName(_classThis, _a));
             (() => {
                 const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
                 __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: typeof _a === "symbol" ? _a.description ? "[".concat(_a.description, "]") : "" : _a, metadata: _metadata }, null, _classExtraInitializers);
@@ -392,8 +421,40 @@ function computed() {
     check(keys, 1);
     check(coercions, 1);
 }
+function symbolFromComputedKey() {
+    var _a;
+    const token = Symbol("member");
+    let coercions = 0;
+    const key = { [Symbol.toPrimitive](hint) {
+            check(hint, "string");
+            coercions++;
+            return token;
+        } };
+    const C = (_a = class {
+            static [key]() { return 42; }
+        },
+        {}.constructor.getOwnPropertyDescriptor(_a, "name").writable === false && __setFunctionName(_a, "C"),
+        (() => {
+        })(),
+        _a);
+    check(Reflect.get(C, token)(), 42);
+    check(coercions, 1);
+    check(C.name, "C");
+}
+function boxedSymbolComputedKey() {
+    var _a;
+    const key = Object(Symbol.iterator);
+    const C = (_a = class {
+            static [key]() { return 42; }
+        },
+        {}.constructor.getOwnPropertyDescriptor(_a, "name").writable === false && __setFunctionName(_a, "C"),
+        (() => {
+        })(),
+        _a);
+    check(Reflect.get(C, Symbol.iterator)(), 42);
+    check(C.name, "C");
+}
 function multipleComputedMembers() {
-    var _a, _b;
     const events = [];
     const key = { toString() { events.push("name"); return "name"; } };
     const C = (() => {
@@ -402,10 +463,10 @@ function multipleComputedMembers() {
         let _classExtraInitializers = [];
         let _classThis;
         var class_5 = _classThis = class {
-            static [_a = __propKey((events.push("method"), "method"))]() { return 456; }
-            static get [_b = __propKey(key)]() { return 123; }
+            static [(events.push("method"), "method")]() { return 456; }
+            static get [key]() { return 123; }
         };
-        _a !== "name" && _b !== "name" && __setFunctionName(_classThis, "C");
+        ({}.constructor.getOwnPropertyDescriptor(_classThis, "name").writable === false && __setFunctionName(_classThis, "C"));
         (() => {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             __esDecorate(null, _classDescriptor = { value: _classThis }, _classDecorators, { kind: "class", name: "C", metadata: _metadata }, null, _classExtraInitializers);
@@ -426,25 +487,24 @@ function multipleComputedMembers() {
     check(events.join(","), "method,name,block");
 }
 function memberDecorator() {
-    var _a;
     function method(value) { return value; }
     const C = (() => {
-        var _b;
+        var _a;
         let _staticExtraInitializers = [];
         let _static_method_decorators;
-        return _b = class {
+        return _a = class {
                 static get name() { return 123; }
                 static method() { return 456; }
             },
-            false && __setFunctionName(_b, "C"),
+            false && __setFunctionName(_a, "C"),
             (() => {
                 const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
                 _static_method_decorators = [method];
-                __esDecorate(_b, null, _static_method_decorators, { kind: "method", name: "method", static: true, private: false, access: { has: obj => "method" in obj, get: obj => obj.method }, metadata: _metadata }, null, _staticExtraInitializers);
-                if (_metadata) Object.defineProperty(_b, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
-                __runInitializers(_b, _staticExtraInitializers);
+                __esDecorate(_a, null, _static_method_decorators, { kind: "method", name: "method", static: true, private: false, access: { has: obj => "method" in obj, get: obj => obj.method }, metadata: _metadata }, null, _staticExtraInitializers);
+                if (_metadata) Object.defineProperty(_a, Symbol.metadata, { enumerable: true, configurable: true, writable: true, value: _metadata });
+                __runInitializers(_a, _staticExtraInitializers);
             })(),
-            _b;
+            _a;
     })();
     check(C.name, 123);
     check(C.method(), 456);
@@ -458,9 +518,9 @@ function memberDecorator() {
         let _staticExtraInitializers = [];
         let _static_member_decorators;
         var class_6 = _classThis = class {
-            static [(_static_member_decorators = [method], _a = __propKey(_a = __propKey((keys++, "name"))))]() { return 789; }
+            static [(_static_member_decorators = [method], _a = __propKey((keys++, "name")))]() { return 789; }
         };
-        _a !== "name" && __setFunctionName(_classThis, "D");
+        ({}.constructor.getOwnPropertyDescriptor(_classThis, "name").writable === false && __setFunctionName(_classThis, "D"));
         (() => {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             __esDecorate(_classThis, null, _static_member_decorators, { kind: "method", name: _a, static: true, private: false, access: { has: obj => _a in obj, get: obj => obj[_a] }, metadata: _metadata }, null, _staticExtraInitializers);
@@ -522,7 +582,6 @@ function symbols() {
     check(other[anonymous].name(), 456);
 }
 function fieldsAndAccessors() {
-    var _a;
     const C = (() => {
         var _name_accessor_storage;
         let _classDecorators = [dec];
@@ -550,16 +609,16 @@ function fieldsAndAccessors() {
     check(C.name, 123);
     const key = "name";
     const computed = (() => {
-        var __a_accessor_storage;
+        var __a_accessor_storage, _a;
         let _classDecorators = [dec];
         let _classDescriptor;
         let _classExtraInitializers = [];
         let _classThis_1;
         var class_10 = _classThis_1 = class {
-            static get [_a = __propKey(key)]() { return __classPrivateFieldGet(_classThis_1, _classThis_1, "f", __a_accessor_storage); }
+            static get [_a = key]() { return __classPrivateFieldGet(_classThis_1, _classThis_1, "f", __a_accessor_storage); }
             static set [_a](value) { __classPrivateFieldSet(_classThis_1, _classThis_1, value, "f", __a_accessor_storage); }
         };
-        _a !== "name" && __setFunctionName(_classThis_1, "computed");
+        ({}.constructor.getOwnPropertyDescriptor(_classThis_1, "name").writable === false && __setFunctionName(_classThis_1, "computed"));
         (() => {
             const _metadata = typeof Symbol === "function" && Symbol.metadata ? Object.create(null) : void 0;
             __esDecorate(null, _classDescriptor = { value: _classThis_1 }, _classDecorators, { kind: "class", name: "computed", metadata: _metadata }, null, _classExtraInitializers);
@@ -676,14 +735,14 @@ function ordinaryNames() {
 }
 function shadowedObject() {
     function create(Object, key) {
-        var _a, _b;
-        const C = (_b = class {
-                static get [_a = __propKey(key)]() { return 123; }
+        var _a;
+        const C = (_a = class {
+                static get [key]() { return 123; }
             },
-            _a !== "name" && __setFunctionName(_b, "C"),
+            {}.constructor.getOwnPropertyDescriptor(_a, "name").writable === false && __setFunctionName(_a, "C"),
             (() => {
             })(),
-            _b);
+            _a);
         return C;
     }
     const C = create(null, "name");

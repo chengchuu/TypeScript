@@ -75,6 +75,33 @@ export function computed() {
     check(coercions, 1);
 }
 
+export function symbolFromComputedKey() {
+    const token = Symbol("member");
+    let coercions = 0;
+    const key = { [Symbol.toPrimitive](hint: string) {
+        check(hint, "string");
+        coercions++;
+        return token;
+    } };
+    const C = class {
+        static [key as unknown as symbol]() { return 42; }
+        static {}
+    };
+    check(Reflect.get(C, token)(), 42);
+    check(coercions, 1);
+    check(C.name, "C");
+}
+
+export function boxedSymbolComputedKey() {
+    const key = Object(Symbol.iterator);
+    const C = class {
+        static [key]() { return 42; }
+        static {}
+    };
+    check(Reflect.get(C, Symbol.iterator)(), 42);
+    check(C.name, "C");
+}
+
 export function multipleComputedMembers() {
     const events: string[] = [];
     const key = { toString() { events.push("name"); return "name"; } };
