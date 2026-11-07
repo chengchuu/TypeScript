@@ -509,6 +509,20 @@ func (tx *classFieldsTransformer) visitPropertyAssignment(node *ast.PropertyAssi
 	//        a. Let _popValue_ be ? NamedEvaluation of |AssignmentExpression| with argument _propKey_.
 	//     ...
 
+	if !tx.shouldTransformPrivateElementsOrClassStaticBlocks && ast.IsComputedPropertyName(node.Name()) &&
+		isNamedEvaluationAnd(tx.EmitContext(), node.AsNode(), classHasComputedStaticMethod) {
+		ec := tx.EmitContext()
+		node = transformNamedEvaluation(ec, node.AsNode(), false, "").AsPropertyAssignment()
+		node = tx.Visitor().VisitEachChild(node.AsNode()).AsPropertyAssignment()
+		// The static block handles naming. Suppress the object's subsequent named evaluation.
+		f := tx.Factory()
+		inner := ast.SkipOuterExpressions(node.Initializer, ast.OEKAll)
+		initializer := wrapClassForNamedEvaluation(ec, inner, inner.Members())
+		initializer = f.RestoreOuterExpressions(node.Initializer, initializer, ast.OEKAll)
+		initializer = f.NewCommaExpression(f.NewNumericLiteral("0", 0), initializer)
+		node = f.UpdatePropertyAssignment(node, nil, node.Name(), nil, nil, initializer).AsPropertyAssignment()
+		return node.AsNode()
+	}
 	if isNamedEvaluationAnd(tx.EmitContext(), node.AsNode(), tx.isAnonymousClassNeedingAssignedName) {
 		node = transformNamedEvaluation(tx.EmitContext(), node.AsNode(), false /*ignoreEmptyStringLiteral*/, "" /*assignedName*/).AsPropertyAssignment()
 	}
@@ -1399,6 +1413,9 @@ func (tx *classFieldsTransformer) transformClassStaticBlockDeclaration(node *ast
 		}
 
 		if isClassNamedEvaluationHelperBlock(tx.EmitContext(), node) {
+			if len(node.AsClassStaticBlockDeclaration().Body.Statements()) == 0 {
+				return nil
+			}
 			return tx.Visitor().VisitNode(node.AsClassStaticBlockDeclaration().Body.AsBlock().Statements.Nodes[0].Expression())
 		}
 
@@ -2105,6 +2122,10 @@ func (tx *classFieldsTransformer) visitClassExpressionInNewClassLexicalEnvironme
 		heritageClauses,
 		members,
 	)
+
+	if tx.shouldTransformPrivateElementsOrClassStaticBlocks {
+		classExpression = wrapClassForNamedEvaluation(tx.EmitContext(), classExpression, node.Members())
+	}
 
 	var expressions []*ast.Expression
 	if membersPrologue != nil {

@@ -786,12 +786,25 @@ func (tx *esDecoratorTransformer) transformClassLike(node *ast.Node) *ast.Expres
 	// 10. Class binding is initialized
 	//
 	// produces:
-	//   __esDecorate(null, _classDescriptor = { value: this }, _classDecorators, { kind: "class", name: this.name, metadata }, null, _classExtraInitializers);
+	//   __esDecorate(null, _classDescriptor = { value: this }, _classDecorators, { kind: "class", name: "C", metadata }, null, _classExtraInitializers);
 	if ci.classDescriptorName != nil && ci.classDecoratorsName != nil && ci.classExtraInitializersName != nil && ci.classThis != nil {
 		valueProperty := f.NewPropertyAssignment(nil, f.NewIdentifier("value"), nil, nil, renamedClassThis)
 		classDescriptor := f.NewObjectLiteralExpression(f.NewNodeList([]*ast.Node{valueProperty}), false)
 		classDescriptorAssignment := f.NewAssignmentExpression(ci.classDescriptorName, classDescriptor)
-		classNameReference := f.NewPropertyAccessExpression(renamedClassThis, nil, f.NewIdentifier("name"), ast.NodeFlagsNone)
+		// A static name member must not supply the class decorator's context name.
+		classNameReference := ec.AssignedName(node)
+		if name := node.Name(); name != nil && !transformers.IsGeneratedIdentifier(ec, name) {
+			classNameReference = f.NewStringLiteralFromNode(name)
+		} else if classNameReference == nil {
+			original := ec.MostOriginal(node)
+			if ast.IsClassDeclaration(original) && original.Name() == nil && original.ModifierFlags()&ast.ModifierFlagsExportDefault == ast.ModifierFlagsExportDefault {
+				classNameReference = f.NewStringLiteral("default", 0)
+			} else {
+				classNameReference = f.NewStringLiteral("", 0)
+			}
+		} else if !ast.IsStringLiteral(classNameReference) {
+			classNameReference = classNameFromPropertyKey(f, classNameReference)
+		}
 
 		contextObj := f.NewESDecorateClassContextObject(classNameReference, ci.metadataReference)
 
@@ -955,7 +968,11 @@ func (tx *esDecoratorTransformer) transformClassLike(node *ast.Node) *ast.Expres
 		//       return C;
 		//   })();
 
-		classReferenceDeclaration := f.NewVariableDeclaration(classReference, nil, nil, classExpression)
+		initializer := classExpression
+		if tx.compilerOptions.GetEmitScriptTarget() >= core.ScriptTargetES2022 {
+			initializer = wrapClassForNamedEvaluation(ec, classExpression, members.Nodes)
+		}
+		classReferenceDeclaration := f.NewVariableDeclaration(classReference, nil, nil, initializer)
 		classReferenceVarDeclList := f.NewVariableDeclarationList(f.NewNodeList([]*ast.Node{classReferenceDeclaration}), ast.NodeFlagsNone)
 		var returnExpr *ast.Expression
 		if ci.classThis != nil {
@@ -973,7 +990,11 @@ func (tx *esDecoratorTransformer) transformClassLike(node *ast.Node) *ast.Expres
 		//   return <classExpression>;
 		classExpression = f.NewClassExpression(nil, node.Name(), nil, heritageClauses, members)
 		ec.SetOriginal(classExpression, node)
-		classDefinitionStatements = append(classDefinitionStatements, f.NewReturnStatement(classExpression))
+		initializer := classExpression
+		if tx.compilerOptions.GetEmitScriptTarget() >= core.ScriptTargetES2022 {
+			initializer = wrapClassForNamedEvaluation(ec, classExpression, members.Nodes)
+		}
+		classDefinitionStatements = append(classDefinitionStatements, f.NewReturnStatement(initializer))
 	}
 
 	if shouldTransformPrivateStaticElementsInClass {

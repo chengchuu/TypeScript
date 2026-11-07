@@ -9,18 +9,27 @@ import (
 )
 
 /**
- * Gets whether a node is a `static {}` block containing only a single call to the `__setFunctionName` helper where that
+ * Gets whether a node is a `static {}` block containing a possibly guarded call to the `__setFunctionName` helper where that
  * call's second argument is the value stored in the `assignedName` property of the block's `EmitNode`.
  * @internal
  */
 func isClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, node *ast.Node) bool {
-	if !ast.IsClassStaticBlockDeclaration(node) || len(node.AsClassStaticBlockDeclaration().Body.Statements()) != 1 {
+	if !ast.IsClassStaticBlockDeclaration(node) {
+		return false
+	}
+	if len(node.AsClassStaticBlockDeclaration().Body.Statements()) == 0 {
+		return emitContext.AssignedName(node) != nil
+	}
+	if len(node.AsClassStaticBlockDeclaration().Body.Statements()) != 1 {
 		return false
 	}
 
 	statement := node.AsClassStaticBlockDeclaration().Body.Statements()[0]
 	if ast.IsExpressionStatement(statement) {
 		expression := statement.Expression()
+		if ast.IsBinaryExpression(expression) && expression.AsBinaryExpression().OperatorToken.Kind == ast.KindAmpersandAmpersandToken {
+			expression = expression.AsBinaryExpression().Right
+		}
 		if emitContext.IsCallToHelper(expression, "__setFunctionName") {
 			arguments := expression.AsCallExpression().Arguments
 			return len(arguments.Nodes) >= 2 &&
@@ -115,7 +124,7 @@ func getAssignedNameOfIdentifier(emitContext *printer.EmitContext, name *ast.Ide
 	return emitContext.Factory.NewStringLiteralFromNode(name)
 }
 
-func getAssignedNameOfPropertyName(emitContext *printer.EmitContext, name *ast.PropertyName, assignedNameText string) (assignedName *ast.Expression, updatedName *ast.PropertyName) {
+func getAssignedNameOfPropertyName(emitContext *printer.EmitContext, name *ast.PropertyName, assignedNameText string, keyHelper func(*ast.Expression) *ast.Expression) (assignedName *ast.Expression, updatedName *ast.PropertyName) {
 	factory := emitContext.Factory
 	if len(assignedNameText) > 0 {
 		assignedName := factory.NewStringLiteral(assignedNameText, ast.TokenFlagsNone)
@@ -138,7 +147,7 @@ func getAssignedNameOfPropertyName(emitContext *printer.EmitContext, name *ast.P
 	assignedName = factory.NewGeneratedNameForNode(name)
 	emitContext.AddVariableDeclaration(assignedName)
 
-	key := factory.NewPropKeyHelper(expression)
+	key := keyHelper(expression)
 	assignment := factory.NewAssignmentExpression(assignedName, key)
 	updatedName = factory.UpdateComputedPropertyName(name.AsComputedPropertyName(), assignment)
 	return assignedName, updatedName
@@ -150,7 +159,7 @@ func getAssignedNameOfPropertyName(emitContext *printer.EmitContext, name *ast.P
 // side effects.
 // The thisExpression parameter overrides the expression to use for the actual `this` reference. This can be used to provide an
 // expression that has already had its `EmitFlags` set or may have been tracked to prevent substitution.
-func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, assignedName *ast.Expression, thisExpression *ast.Expression) *ast.Node {
+func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, assignedName *ast.Expression, thisExpression *ast.Expression, condition *ast.Expression) *ast.Node {
 	// produces:
 	//
 	//  static { __setFunctionName(this, "C"); }
@@ -162,6 +171,9 @@ func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, ass
 
 	factory := emitContext.Factory
 	expression := factory.NewSetFunctionNameHelper(thisExpression, assignedName, "" /*prefix*/)
+	if condition != nil {
+		expression = factory.NewLogicalANDExpression(condition, expression)
+	}
 	statement := factory.NewExpressionStatement(expression)
 	body := factory.NewBlock(factory.NewNodeList([]*ast.Statement{statement}), false /*multiLine*/)
 	block := factory.NewClassStaticBlockDeclaration(nil /*modifiers*/, body)
@@ -170,6 +182,100 @@ func createClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, ass
 	// and to stash the expression used to resolve the assigned name.
 	emitContext.SetAssignedName(block, assignedName)
 	return block.AsNode()
+}
+
+// Moving a computed name outside a class with its own private environment or
+// heritage could change name resolution or the order of heritage evaluation.
+func canCaptureClassKeys(ec *printer.EmitContext, class *ast.Node) bool {
+	if !ec.PreserveEvalBindings || !ast.IsClassExpression(class) || class.Name() != nil || class.AsClassExpression().HeritageClauses != nil {
+		return false
+	}
+	for _, member := range class.Members() {
+		if len(member.Decorators()) != 0 || (member.Name() != nil && ast.IsPrivateIdentifier(member.Name())) || ast.IsAutoAccessorPropertyDeclaration(member) {
+			return false
+		}
+	}
+	return len(class.Decorators()) == 0
+}
+
+func classNameFromPropertyKey(f *printer.NodeFactory, key *ast.Node) *ast.Node {
+	// Computed property keys are already evaluated; normalize symbols as __setFunctionName does.
+	description := f.NewPropertyAccessExpression(key, nil, f.NewIdentifier("description"), ast.NodeFlagsNone)
+	return f.NewConditionalExpression(
+		f.NewTypeCheck(key, "symbol"),
+		f.NewToken(ast.KindQuestionToken),
+		f.NewConditionalExpression(
+			description,
+			f.NewToken(ast.KindQuestionToken),
+			f.NewMethodCall(f.NewStringLiteral("[", 0), f.NewIdentifier("concat"), []*ast.Expression{description, f.NewStringLiteral("]", 0)}),
+			f.NewToken(ast.KindColonToken),
+			f.NewStringLiteral("", 0),
+		),
+		f.NewToken(ast.KindColonToken),
+		key,
+	)
+}
+
+func classWithComputedInferredName(ec *printer.EmitContext, class, name *ast.Node) *ast.Node {
+	f := ec.Factory
+	var prelude []*ast.Node
+	var overrides *ast.Node
+	members := slices.Clone(class.Members())
+	for i, member := range members {
+		property := member.Name()
+		if property == nil || !ast.IsComputedPropertyName(property) {
+			continue
+		}
+		key := f.NewTempVariable()
+		ec.AddVariableDeclaration(key)
+		prelude = append(prelude, f.NewAssignmentExpression(key, f.NewNativeClassPropertyKey(property.Expression())))
+		visitor := ec.NewNodeVisitor(func(n *ast.Node) *ast.Node {
+			if n == property {
+				return f.NewComputedPropertyName(key.Clone(f))
+			}
+			return n
+		})
+		members[i] = visitor.VisitEachChild(member)
+		if ast.HasStaticModifier(member) && ast.IsMethodOrAccessor(member) {
+			match := f.NewStrictEqualityExpression(key.Clone(f), f.NewStringLiteral("name", 0))
+			if overrides == nil {
+				overrides = match
+			} else {
+				overrides = f.NewLogicalORExpression(overrides, match)
+			}
+		}
+	}
+	c := class.AsClassExpression()
+	value := f.UpdateClassExpression(c, c.Modifiers(), c.Name(), c.TypeParameters, c.HeritageClauses, f.NewNodeList(members))
+	inferred := f.NewTempVariable()
+	ec.AddVariableDeclaration(inferred)
+	nameKey := f.NewAssignmentExpression(inferred, classNameFromPropertyKey(f, name))
+	property := f.NewPropertyAssignment(nil, f.NewComputedPropertyName(nameKey), nil, nil, value)
+	holder := f.NewObjectLiteralExpression(f.NewNodeList([]*ast.Node{property}), false)
+	named := f.NewElementAccessExpression(holder, nil, inferred.Clone(f), ast.NodeFlagsNone)
+	if overrides != nil {
+		named = f.NewConditionalExpression(overrides, f.NewToken(ast.KindQuestionToken), value, f.NewToken(ast.KindColonToken), named)
+	}
+	return f.InlineExpressions(append(prelude, named))
+}
+
+// For a dynamic static member, let the engine assign the class name before it defines
+// the members. Both occurrences of name use the already evaluated property key.
+func wrapClassForNamedEvaluation(ec *printer.EmitContext, class *ast.Node, members []*ast.Node) *ast.Node {
+	for _, member := range members {
+		if ast.IsClassStaticBlockDeclaration(member) && len(member.AsClassStaticBlockDeclaration().Body.Statements()) == 0 {
+			if name := ec.AssignedName(member); name != nil {
+				f := ec.Factory
+				if !ast.IsStringLiteral(name) {
+					return classWithComputedInferredName(ec, class, name)
+				}
+				property := f.NewPropertyAssignment(nil, name, nil, nil, class)
+				object := f.NewObjectLiteralExpression(f.NewNodeList([]*ast.Node{property}), false)
+				return f.NewElementAccessExpression(object, nil, name.Clone(f), ast.NodeFlagsNone)
+			}
+		}
+	}
+	return class
 }
 
 // Injects a class `static {}` block used to dynamically set the name of a class, if one does not already exist.
@@ -197,16 +303,53 @@ func injectClassNamedEvaluationHelperBlockIfMissing(
 	}
 
 	factory := emitContext.Factory
-	namedEvaluationBlock := createClassNamedEvaluationHelperBlock(emitContext, assignedName, thisExpression)
-	if node.Name() != nil {
-		emitContext.SetSourceMapRange(namedEvaluationBlock.Body().Statements()[0], node.Name().Loc)
+	memberNodes := node.Members()
+	var condition *ast.Expression
+	nativeName := emitContext.PreserveEvalBindings && ast.IsClassExpression(node) && node.Name() == nil &&
+		((ast.IsStringLiteral(assignedName) && assignedName.Text() != "__proto__") ||
+			(!ast.IsStringLiteral(assignedName) && canCaptureClassKeys(emitContext, node)))
+	for _, member := range memberNodes {
+		if !ast.HasStaticModifier(member) || !(ast.IsMethodOrAccessor(member) || ast.IsAutoAccessorPropertyDeclaration(member)) || ast.IsPrivateIdentifier(member.Name()) {
+			continue
+		}
+		name := member.Name()
+		if ast.IsComputedPropertyName(name) {
+			name = name.Expression()
+			if !ast.IsPropertyNameLiteral(name) || ast.IsIdentifier(name) {
+				if (ast.IsStringLiteral(assignedName) && assignedName.Text() != "__proto__") || (!ast.IsStringLiteral(assignedName) && canCaptureClassKeys(emitContext, node)) {
+					nativeName = true
+				} else if condition == nil {
+					receiver := thisExpression
+					if receiver == nil {
+						receiver = factory.NewThisExpression()
+					}
+					condition = factory.NewHasDefaultClassNameCall(receiver)
+				}
+				continue
+			}
+		}
+		if name.Text() == "name" {
+			nativeName = false
+			condition = factory.NewFalseExpression()
+			break
+		}
+	}
+	var namedEvaluationBlock *ast.Node
+	if nativeName {
+		namedEvaluationBlock = factory.NewClassStaticBlockDeclaration(nil, factory.NewBlock(factory.NewNodeList(nil), false))
+		emitContext.SetAssignedName(namedEvaluationBlock, assignedName)
+	} else {
+		namedEvaluationBlock = createClassNamedEvaluationHelperBlock(emitContext, assignedName, thisExpression, condition)
+		if node.Name() != nil {
+			emitContext.SetSourceMapRange(namedEvaluationBlock.Body().Statements()[0], node.Name().Loc)
+		}
 	}
 
-	insertionIndex := slices.IndexFunc(node.Members(), func(n *ast.Node) bool {
+	insertionIndex := slices.IndexFunc(memberNodes, func(n *ast.Node) bool {
 		return isClassThisAssignmentBlock(emitContext, n)
 	}) + 1
-	leading := slices.Clone(node.Members()[:insertionIndex])
-	trailing := slices.Clone(node.Members()[insertionIndex:])
+	leading := memberNodes[:insertionIndex]
+	trailing := memberNodes[insertionIndex:]
 
 	var members []*ast.ClassElement
 	members = append(members, leading...)
@@ -270,6 +413,12 @@ func finishTransformNamedEvaluation(
 	return factory.RestoreOuterExpressions(expression, updatedExpression, ast.OEKAll)
 }
 
+func classHasComputedStaticMethod(class *ast.Node) bool {
+	return ast.IsClassExpression(class) && slices.ContainsFunc(class.Members(), func(member *ast.Node) bool {
+		return ast.HasStaticModifier(member) && ast.IsMethodOrAccessor(member) && ast.IsComputedPropertyName(member.Name())
+	})
+}
+
 func transformNamedEvaluationOfPropertyAssignment(context *printer.EmitContext, node *ast.PropertyAssignment /*NamedEvaluation & PropertyAssignment*/, ignoreEmptyStringLiteral bool, assignedNameText string) *ast.Expression {
 	// 13.2.5.5 RS: PropertyDefinitionEvaluation
 	//   PropertyAssignment : PropertyName `:` AssignmentExpression
@@ -279,7 +428,14 @@ func transformNamedEvaluationOfPropertyAssignment(context *printer.EmitContext, 
 	//     ...
 
 	factory := context.Factory
-	assignedName, name := getAssignedNameOfPropertyName(context, node.Name(), assignedNameText)
+	keyHelper := factory.NewPropKeyHelper
+	if classHasComputedStaticMethod(ast.SkipOuterExpressions(node.Initializer, ast.OEKAll)) {
+		keyHelper = factory.NewClassPropertyKeyCall
+		if canCaptureClassKeys(context, ast.SkipOuterExpressions(node.Initializer, ast.OEKAll)) {
+			keyHelper = factory.NewNativeClassPropertyKey
+		}
+	}
+	assignedName, name := getAssignedNameOfPropertyName(context, node.Name(), assignedNameText, keyHelper)
 	initializer := finishTransformNamedEvaluation(context, node.Initializer, assignedName, ignoreEmptyStringLiteral)
 	return factory.UpdatePropertyAssignment(node, nil /*modifiers*/, name, nil /*postfixToken*/, nil /*typeNode*/, initializer)
 }
@@ -423,7 +579,7 @@ func transformNamedEvaluationOfPropertyDeclaration(emitContext *printer.EmitCont
 	//     ...
 
 	factory := emitContext.Factory
-	assignedName, name := getAssignedNameOfPropertyName(emitContext, node.Name(), assignedNameText)
+	assignedName, name := getAssignedNameOfPropertyName(emitContext, node.Name(), assignedNameText, factory.NewPropKeyHelper)
 	initializer := finishTransformNamedEvaluation(emitContext, node.Initializer, assignedName, ignoreEmptyStringLiteral)
 	return factory.UpdatePropertyDeclaration(
 		node,
