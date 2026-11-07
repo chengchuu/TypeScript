@@ -14,16 +14,17 @@ import (
 //
 // NOTE: EmitContext is not guaranteed to be thread-safe.
 type EmitContext struct {
-	Factory       *NodeFactory // Required. The NodeFactory to use to create new nodes
-	autoGenerate  map[*ast.MemberName]*AutoGenerateInfo
-	textSource    map[*ast.StringLiteralNode]*ast.Node
-	original      map[*ast.Node]*ast.Node
-	emitNodes     core.LinkStore[*ast.Node, emitNode]
-	assignedName  map[*ast.Node]*ast.Expression
-	classThis     map[*ast.Node]*ast.IdentifierNode
-	varScopeStack core.Stack[*varScope]
-	letScopeStack core.Stack[*varScope]
-	emitHelpers   collections.OrderedSet[*EmitHelper]
+	PreserveEvalBindings bool
+	Factory              *NodeFactory // Required. The NodeFactory to use to create new nodes
+	autoGenerate         map[*ast.MemberName]*AutoGenerateInfo
+	textSource           map[*ast.StringLiteralNode]*ast.Node
+	original             map[*ast.Node]*ast.Node
+	emitNodes            core.LinkStore[*ast.Node, emitNode]
+	assignedName         map[*ast.Node]*ast.Expression
+	classThis            map[*ast.Node]*ast.IdentifierNode
+	varScopeStack        core.Stack[*varScope]
+	letScopeStack        core.Stack[*varScope]
+	emitHelpers          collections.OrderedSet[*EmitHelper]
 }
 
 type environmentFlags int
@@ -722,6 +723,11 @@ func (c *EmitContext) MoveEmitHelpers(source *ast.Node, target *ast.Node, predic
 		sourceEmitHelpers = sourceEmitHelpers[:len(sourceEmitHelpers)-helpersRemoved]
 		sourceEmitNode.helpers = sourceEmitHelpers
 	}
+}
+
+func (c *EmitContext) UsesClassNameHelpers(file *ast.SourceFile) bool {
+	helpers := c.GetEmitHelpers(file.AsNode())
+	return slices.Contains(helpers, classPropertyKeyHelper) || slices.Contains(helpers, hasDefaultClassNameHelper) || slices.Contains(helpers, setFunctionNameHelper)
 }
 
 func (c *EmitContext) GetEmitHelpers(node *ast.Node) []*EmitHelper {

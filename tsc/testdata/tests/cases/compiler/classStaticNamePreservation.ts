@@ -177,6 +177,21 @@ export function ordinaryNames() {
     check(names.pop(), "");
 }
 
+export function modifiedObjectConstructor() {
+    const original = Object.prototype.constructor;
+    try {
+        (Object.prototype as any).constructor = undefined;
+        const C = class {
+            static [Symbol.iterator]() { return 42; }
+            static {}
+        };
+        check(C[Symbol.iterator](), 42);
+        check(C.name, "C");
+    } finally {
+        Object.prototype.constructor = original;
+    }
+}
+
 export function shadowedObject() {
     function create(Object: unknown, key: string) {
         const C = class {
