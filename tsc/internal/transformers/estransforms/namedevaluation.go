@@ -8,11 +8,8 @@ import (
 	"github.com/microsoft/TypeScript/tsc/internal/printer"
 )
 
-/**
- * Gets whether a node is a `static {}` block containing a possibly guarded call to the `__setFunctionName` helper where that
- * call's second argument is the value stored in the `assignedName` property of the block's `EmitNode`.
- * @internal
- */
+// Recognizes synthetic naming blocks: an empty block carrying an assigned name,
+// or a possibly guarded __setFunctionName call using that name.
 func isClassNamedEvaluationHelperBlock(emitContext *printer.EmitContext, node *ast.Node) bool {
 	if !ast.IsClassStaticBlockDeclaration(node) {
 		return false
