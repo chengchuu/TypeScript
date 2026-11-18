@@ -5,13 +5,13 @@ type Priority struct {
 }
 
 type EmitHelper struct {
-	Name         string                                          // A unique name for this helper.
-	Scoped       bool                                            // Indicates whether the helper MUST be emitted in the current scope.
-	Text         string                                          // ES3-compatible raw script text
-	TextCallback func(makeUniqueName func(string) string) string // A function yielding an ES3-compatible raw script text.
-	Priority     *Priority                                       // Helpers with a higher priority are emitted earlier than other helpers on the node.
-	Dependencies []*EmitHelper                                   // Emit helpers this helper depends on
-	ImportName   string                                          // The name of the helper to use when importing via `--importHelpers`.
+	Name         string                // A unique name for this helper.
+	Scoped       bool                  // Indicates whether the helper MUST be emitted in the current scope.
+	Text         string                // ES3-compatible raw script text
+	TextCallback func(*Printer) string // A function yielding an ES3-compatible raw script text.
+	Priority     *Priority             // Helpers with a higher priority are emitted earlier than other helpers on the node.
+	Dependencies []*EmitHelper         // Emit helpers this helper depends on
+	ImportName   string                // The name of the helper to use when importing via `--importHelpers`.
 }
 
 func compareEmitHelpers(x *EmitHelper, y *EmitHelper) int {
@@ -364,19 +364,55 @@ var awaiterHelper = &EmitHelper{
 };`,
 }
 
+const classPropertyKey = "_classPropertyKey"
+
+// An element access performs native ToPropertyKey before passing the key to the trap.
+var nativeClassPropertyKeyHelper = &EmitHelper{
+	Name:   "typescript:nativeClassPropertyKey",
+	Scoped: true,
+	TextCallback: func(p *Printer) string {
+		return "var " + p.makeFileLevelOptimisticUniqueName(classPropertyKey+"Native") + " = new Proxy({}, { get: (_, key) => key });"
+	},
+}
+
+var classPropertyKeyHelper = &EmitHelper{
+	Name:   "typescript:classPropertyKey",
+	Scoped: true,
+	TextCallback: func(p *Printer) string {
+		receiver := p.classNameDescriptorReceiver()
+		keys := receiver + ".getOwnPropertyNames(key).concat(" + receiver + ".getOwnPropertySymbols(key))"
+		if receiver == "Reflect" {
+			keys = "Reflect.ownKeys(key)"
+		}
+		// A computed property performs ToPropertyKey once, including for boxed symbols.
+		return "function " + p.makeFileLevelOptimisticUniqueName(classPropertyKey) + "(value) { var key = { [value]: 0 }; return " + keys + "[0]; }"
+	},
+}
+
+const hasDefaultClassName = "_hasDefaultClassName"
+
+var hasDefaultClassNameHelper = &EmitHelper{
+	Name:   "typescript:hasDefaultClassName",
+	Scoped: true,
+	TextCallback: func(p *Printer) string {
+		receiver := p.classNameDescriptorReceiver()
+		return "function " + p.makeFileLevelOptimisticUniqueName(hasDefaultClassName) + "(cls) { return " + receiver + ".getOwnPropertyDescriptor(cls, \"name\").writable === false; }"
+	},
+}
+
 var AsyncSuperHelper = &EmitHelper{
 	Name:   "typescript:async-super",
 	Scoped: true,
-	TextCallback: func(makeUniqueName func(string) string) string {
-		return "\nconst " + makeUniqueName("_superIndex") + " = name => super[name];"
+	TextCallback: func(p *Printer) string {
+		return "\nconst " + p.makeFileLevelOptimisticUniqueName("_superIndex") + " = name => super[name];"
 	},
 }
 
 var AdvancedAsyncSuperHelper = &EmitHelper{
 	Name:   "typescript:advanced-async-super",
 	Scoped: true,
-	TextCallback: func(makeUniqueName func(string) string) string {
-		return "\nconst " + makeUniqueName("_superIndex") + " = (function (geti, seti) {\n" +
+	TextCallback: func(p *Printer) string {
+		return "\nconst " + p.makeFileLevelOptimisticUniqueName("_superIndex") + " = (function (geti, seti) {\n" +
 			"    const cache = Object.create(null);\n" +
 			"    return name => cache[name] || (cache[name] = { get value() { return geti(name); }, set value(v) { seti(name, v); } });\n" +
 			"})(name => super[name], (name, value) => super[name] = value);"
@@ -460,10 +496,19 @@ var setFunctionNameHelper = &EmitHelper{
 	Name:       "typescript:setFunctionName",
 	ImportName: "__setFunctionName",
 	Scoped:     false,
-	Text: `var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
+	TextCallback: func(p *Printer) string {
+		const descriptor = `{ configurable: true, value: prefix ? "".concat(prefix, " ", name) : name }`
+		receiver := p.classNameDescriptorReceiver()
+		define := `return ` + receiver + `.defineProperty(f, "name", ` + descriptor + `);`
+		if receiver == "Reflect" {
+			// Reflect returns a boolean; __setFunctionName returns the function or throws.
+			define = `if (!Reflect.defineProperty(f, "name", ` + descriptor + `)) throw new TypeError("Cannot redefine property: name");` + "\n    return f;"
+		}
+		return `var __setFunctionName = (this && this.__setFunctionName) || function (f, name, prefix) {
     if (typeof name === "symbol") name = name.description ? "[".concat(name.description, "]") : "";
-    return Object.defineProperty(f, "name", { configurable: true, value: prefix ? "".concat(prefix, " ", name) : name });
-};`,
+    ` + define + `
+};`
+	},
 }
 
 // ES Module Helpers

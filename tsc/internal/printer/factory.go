@@ -1218,6 +1218,25 @@ func (f *NodeFactory) NewPropKeyHelper(expr *ast.Expression) *ast.Expression {
 	)
 }
 
+func (f *NodeFactory) NewNativeClassPropertyKey(value *ast.Expression) *ast.Expression {
+	f.emitContext.emitHelpers.Add(nativeClassPropertyKeyHelper)
+	name := f.NewUniqueNameEx(classPropertyKey+"Native", AutoGenerateOptions{Flags: GeneratedIdentifierFlagsFileLevel | GeneratedIdentifierFlagsOptimistic})
+	return f.NewElementAccessExpression(name, nil, value, ast.NodeFlagsNone)
+}
+
+func (f *NodeFactory) NewClassPropertyKeyCall(value *ast.Expression) *ast.Expression {
+	f.emitContext.emitHelpers.Add(classPropertyKeyHelper)
+	name := f.NewUniqueNameEx(classPropertyKey, AutoGenerateOptions{Flags: GeneratedIdentifierFlagsFileLevel | GeneratedIdentifierFlagsOptimistic})
+	return f.NewCallExpression(name, nil, nil, f.NewNodeList([]*ast.Expression{value}), ast.NodeFlagsNone)
+}
+
+func (f *NodeFactory) NewHasDefaultClassNameCall(target *ast.Expression) *ast.Expression {
+	// Emit in the source-file scope, including when other helpers are imported from tslib.
+	f.emitContext.emitHelpers.Add(hasDefaultClassNameHelper)
+	name := f.NewUniqueNameEx(hasDefaultClassName, AutoGenerateOptions{Flags: GeneratedIdentifierFlagsFileLevel | GeneratedIdentifierFlagsOptimistic})
+	return f.NewCallExpression(name, nil, nil, f.NewNodeList([]*ast.Expression{target}), ast.NodeFlagsNone)
+}
+
 func (f *NodeFactory) NewSetFunctionNameHelper(fn *ast.Expression, name *ast.Expression, prefix string) *ast.Expression {
 	f.emitContext.RequestEmitHelper(setFunctionNameHelper)
 	var arguments []*ast.Expression

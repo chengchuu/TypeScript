@@ -86,10 +86,25 @@ func (e *emitter) runScriptTransformers(emitResolver printer.EmitResolver, sourc
 	if e.tr != nil {
 		defer e.tr.Push(tracing.PhaseEmit, "transformNodes", map[string]any{"path": string(sourceFile.PathKey())}, false)()
 	}
+	// Renaming a file binding would change the environment seen by direct eval.
+	locals := sourceFile.Locals
+	if locals["Object"] != nil && locals["Reflect"] != nil && locals["Proxy"] == nil && sourceFile.HasIdentifier("eval") {
+		emitResolver.EmitContext().PreserveEvalBindings = sourceFile.ForEachChild(containsDirectEval)
+	}
 	for _, transformer := range getScriptTransformers(emitResolver, e.host, sourceFile) {
 		sourceFile = transformer.TransformSourceFile(sourceFile)
 	}
-	return sourceFile
+	return moduletransforms.ProtectClassNameHelperBinding(emitResolver, sourceFile)
+}
+
+func containsDirectEval(node *ast.Node) bool {
+	if ast.IsCallExpression(node) && !ast.IsOptionalChain(node) {
+		callee := ast.SkipParentheses(node.Expression())
+		if ast.IsIdentifier(callee) && callee.Text() == "eval" {
+			return true
+		}
+	}
+	return node.ForEachChild(containsDirectEval)
 }
 
 func (e *emitter) runDeclarationTransformers(emitResolver printer.EmitResolver, sourceFile *ast.SourceFile, declarationFilePath, declarationMapPath tspath.RootedFilePath) (*ast.SourceFile, []*ast.Diagnostic) {

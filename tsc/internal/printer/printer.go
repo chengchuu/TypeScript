@@ -4634,6 +4634,18 @@ func (p *Printer) emitPrologueDirectives(statements *ast.StatementList) int {
 	return len(statements.Nodes)
 }
 
+// The class name helpers run at file scope, where user declarations can shadow the built-ins.
+func (p *Printer) classNameDescriptorReceiver() string {
+	if p.currentSourceFile != nil {
+		locals := p.emitContext.MostOriginal(p.currentSourceFile.AsNode()).Locals()
+		const valueFlags = ast.SymbolFlagsValue | ast.SymbolFlagsExportValue | ast.SymbolFlagsAlias
+		if object := locals["Object"]; object != nil && object.Flags()&valueFlags != 0 {
+			return "Reflect"
+		}
+	}
+	return "Object"
+}
+
 func (p *Printer) emitHelpers(node *ast.Node) bool {
 	helpersEmitted := false
 	sourceFile := p.currentSourceFile
@@ -4651,7 +4663,7 @@ func (p *Printer) emitHelpers(node *ast.Node) bool {
 				}
 			}
 			if helper.TextCallback != nil {
-				p.writeLines(helper.TextCallback(p.makeFileLevelOptimisticUniqueName))
+				p.writeLines(helper.TextCallback(p))
 			} else {
 				p.writeLines(helper.Text)
 			}
