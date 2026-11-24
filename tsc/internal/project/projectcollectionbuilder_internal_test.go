@@ -38,7 +38,7 @@ func TestPruneAfterCachedMatch(t *testing.T) {
 				if level.Has(keyFor(root)) {
 					return
 				}
-				pruneAfterCachedMatch(level, func(key searchNodeKey, _ searchNode) bool {
+				pruneAfterCachedMatch(level, func(key searchNodeKey) bool {
 					return key.configFileName == "/cached.json"
 				})
 				level.Range(func(key searchNodeKey, _ searchNode) bool {

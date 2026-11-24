@@ -1099,19 +1099,18 @@ func removeRedundantFindRequests(level *core.BreadthFirstSearchLevel[searchNodeK
 	}
 }
 
-// A clean project that directly contains the file can rule out later candidates.
-// Earlier candidates still take precedence and can be checked in parallel.
+// Earlier candidates can still win, so keep them in the parallel search.
 func pruneAfterCachedMatch(
 	level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode],
-	isCachedMatch func(searchNodeKey, searchNode) bool,
+	isCachedMatch func(searchNodeKey) bool,
 ) {
 	foundMatch := false
 	var trailingKeys []searchNodeKey
-	level.Range(func(key searchNodeKey, node searchNode) bool {
+	level.Range(func(key searchNodeKey, _ searchNode) bool {
 		if foundMatch {
 			trailingKeys = append(trailingKeys, key)
 		} else {
-			foundMatch = isCachedMatch(key, node)
+			foundMatch = isCachedMatch(key)
 		}
 		return true
 	})
@@ -1212,11 +1211,11 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 			Visited: visited,
 			PreprocessLevel: func(level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode]) {
 				removeRedundantFindRequests(level)
-				pruneAfterCachedMatch(level, func(key searchNodeKey, node searchNode) bool {
+				pruneAfterCachedMatch(level, func(key searchNodeKey) bool {
 					if visited.Has(key) {
 						return false
 					}
-					configPath := b.toPathKey(node.configFileName)
+					configPath := b.toPathKey(key.configFileName)
 					projectEntry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(configPath))
 					if !ok || projectEntry.Value().IsDirty() {
 						return false
