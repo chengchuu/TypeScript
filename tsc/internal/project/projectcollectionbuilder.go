@@ -1086,6 +1086,19 @@ type searchResult struct {
 	retain  collections.Set[tspath.PathKey]
 }
 
+func removeRedundantFindRequests(level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode]) {
+	var redundantKeys []searchNodeKey
+	level.Range(func(key searchNodeKey, _ searchNode) bool {
+		if key.loadKind == projectLoadKindFind && level.Has(searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}) {
+			redundantKeys = append(redundantKeys, key)
+		}
+		return true
+	})
+	for _, key := range redundantKeys {
+		level.Delete(key)
+	}
+}
+
 // A clean project that directly contains the file can rule out later candidates.
 // Earlier candidates still take precedence and can be checked in parallel.
 func pruneAfterCachedMatch(
@@ -1198,13 +1211,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 		core.BreadthFirstSearchOptions[searchNodeKey, searchNode]{
 			Visited: visited,
 			PreprocessLevel: func(level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode]) {
-				level.Range(func(key searchNodeKey, node searchNode) bool {
-					if node.loadKind == projectLoadKindFind && level.Has(searchNodeKey{configFileName: node.configFileName, loadKind: projectLoadKindCreate}) {
-						// Remove find requests when a create request for the same project is already present.
-						level.Delete(key)
-					}
-					return true
-				})
+				removeRedundantFindRequests(level)
 				pruneAfterCachedMatch(level, func(key searchNodeKey, node searchNode) bool {
 					if visited.Has(key) {
 						return false
