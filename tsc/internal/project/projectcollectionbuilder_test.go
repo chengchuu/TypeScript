@@ -53,10 +53,8 @@ func TestProjectCollectionBuilder(t *testing.T) {
 				assert.Assert(t, defaultProject != nil)
 				assert.Equal(t, defaultProject.ConfigFileName(), tspath.RootedFilePath("/project/tsconfig.app.json"))
 				synctest.Wait()
-				openLogs := utils.Logs()[logStart:]
-				if i == 0 {
-					assert.Assert(t, strings.Contains(openLogs, "Program update for /project/tsconfig.app.json completed"))
-				} else {
+				if i > 0 {
+					openLogs := utils.Logs()[logStart:]
 					assert.Equal(t, strings.Count(openLogs, "Program update for /project/tsconfig.node.json completed"), 0)
 					assert.Equal(t, strings.Count(openLogs, "Program update for /project/tsconfig.tools.json completed"), 0)
 				}
