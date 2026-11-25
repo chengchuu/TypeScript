@@ -1196,6 +1196,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 		return fileInclusion(project.Value(), node.logger)
 	}
 
+	// PreprocessLevel sets up the shared visits before the workers for each level start.
 	mixedVisits := make(map[tspath.RootedFilePath]func() (bool, bool))
 	search := core.BreadthFirstSearchParallelEx(
 		searchNode{configFileName: configFileName, loadKind: loadKind, logger: logger},
