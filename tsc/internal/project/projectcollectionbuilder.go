@@ -1092,7 +1092,7 @@ func removeRedundantFindRequests(
 ) {
 	var redundantKeys []searchNodeKey
 	level.Range(func(key searchNodeKey, node searchNode) bool {
-		// A project with a program can match at its Find position before its Create request runs.
+		// Built projects can match at their earlier Find position.
 		if key.loadKind == projectLoadKindFind &&
 			level.Has(searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}) &&
 			!keepFind(node) {
@@ -1120,8 +1120,7 @@ func pruneAfterCachedMatch(
 		}
 		return true
 	})
-	// Delete after traversal so entries are not skipped.
-	// Removing from the end keeps pruning linear.
+	// Delete in reverse after traversal to avoid skipping entries and keep pruning linear.
 	for _, key := range slices.Backward(trailingKeys) {
 		level.Delete(key)
 	}
@@ -1168,7 +1167,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 		return true, direct
 	}
 
-	visit := func(node searchNode) (isResult bool, stop bool) {
+	visit := func(node searchNode) (included, direct bool) {
 		configFilePath := b.toPathKey(node.configFileName)
 		config := b.configFileRegistryBuilder.findOrAcquireConfigForFile(node.configFileName, configFilePath, path, node.loadKind, node.logger.Fork("Acquiring config for open file"))
 		if config == nil {
@@ -1230,9 +1229,10 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					if !ok || entry.Value().Program == nil {
 						return false
 					}
-					node.loadKind = projectLoadKindCreate
-					if !visited.Has(searchNodeKey{configFileName: node.configFileName, loadKind: node.loadKind}) {
-						// Share one refreshed result while retaining both positions and their reference load kinds.
+					createKey := searchNodeKey{configFileName: node.configFileName, loadKind: projectLoadKindCreate}
+					if !visited.Has(createKey) {
+						// Both jobs share one refresh and keep their own position and reference load kind.
+						node.loadKind = projectLoadKindCreate
 						mixedVisits[node.configFileName] = sync.OnceValues(func() (bool, bool) { return visit(node) })
 					}
 					return true
