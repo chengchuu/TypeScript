@@ -1086,10 +1086,16 @@ type searchResult struct {
 	retain  collections.Set[tspath.PathKey]
 }
 
-func removeRedundantFindRequests(level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode]) {
+func removeRedundantFindRequests(
+	level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode],
+	keepFind func(searchNode) bool,
+) {
 	var redundantKeys []searchNodeKey
-	level.Range(func(key searchNodeKey, _ searchNode) bool {
-		if key.loadKind == projectLoadKindFind && level.Has(searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}) {
+	level.Range(func(key searchNodeKey, node searchNode) bool {
+		// A project with a program can match at its Find position before its Create request runs.
+		if key.loadKind == projectLoadKindFind &&
+			level.Has(searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}) &&
+			!keepFind(node) {
 			redundantKeys = append(redundantKeys, key)
 		}
 		return true
@@ -1162,6 +1168,33 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 		return true, direct
 	}
 
+	visit := func(node searchNode) (isResult bool, stop bool) {
+		configFilePath := b.toPathKey(node.configFileName)
+		config := b.configFileRegistryBuilder.findOrAcquireConfigForFile(node.configFileName, configFilePath, path, node.loadKind, node.logger.Fork("Acquiring config for open file"))
+		if config == nil {
+			node.logger.Log("Config file for project does not already exist")
+			return false, false
+		}
+		configs.Store(configFilePath, config)
+		if !configMayContainFile(config, node.logger) {
+			return false, false
+		}
+
+		project := b.findOrCreateProject(node.configFileName, configFilePath, node.loadKind, node.logger)
+		if project == nil {
+			node.logger.Log("Project does not already exist")
+			return false, false
+		}
+
+		if node.loadKind == projectLoadKindCreate {
+			// Ensure project is up to date before checking for file inclusion
+			b.updateProgram(project, node.logger)
+		}
+
+		return fileInclusion(project.Value(), node.logger)
+	}
+
+	mixedVisits := make(map[tspath.RootedFilePath]func() (bool, bool))
 	search := core.BreadthFirstSearchParallelEx(
 		searchNode{configFileName: configFileName, loadKind: loadKind, logger: logger},
 		func(node searchNode) []searchNode {
@@ -1182,35 +1215,28 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 			}
 			return nil
 		},
-		func(node searchNode) (isResult bool, stop bool) {
-			configFilePath := b.toPathKey(node.configFileName)
-			config := b.configFileRegistryBuilder.findOrAcquireConfigForFile(node.configFileName, configFilePath, path, node.loadKind, node.logger.Fork("Acquiring config for open file"))
-			if config == nil {
-				node.logger.Log("Config file for project does not already exist")
-				return false, false
+		func(node searchNode) (bool, bool) {
+			if shared := mixedVisits[node.configFileName]; shared != nil {
+				return shared()
 			}
-			configs.Store(configFilePath, config)
-			if !configMayContainFile(config, node.logger) {
-				return false, false
-			}
-
-			project := b.findOrCreateProject(node.configFileName, configFilePath, node.loadKind, node.logger)
-			if project == nil {
-				node.logger.Log("Project does not already exist")
-				return false, false
-			}
-
-			if node.loadKind == projectLoadKindCreate {
-				// Ensure project is up to date before checking for file inclusion
-				b.updateProgram(project, node.logger)
-			}
-
-			return fileInclusion(project.Value(), node.logger)
+			return visit(node)
 		},
 		core.BreadthFirstSearchOptions[searchNodeKey, searchNode]{
 			Visited: visited,
 			PreprocessLevel: func(level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode]) {
-				removeRedundantFindRequests(level)
+				clear(mixedVisits)
+				removeRedundantFindRequests(level, func(node searchNode) bool {
+					entry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(b.toPathKey(node.configFileName)))
+					if !ok || entry.Value().Program == nil {
+						return false
+					}
+					node.loadKind = projectLoadKindCreate
+					if !visited.Has(searchNodeKey{configFileName: node.configFileName, loadKind: node.loadKind}) {
+						// Share one refreshed result while retaining both positions and their reference load kinds.
+						mixedVisits[node.configFileName] = sync.OnceValues(func() (bool, bool) { return visit(node) })
+					}
+					return true
+				})
 				pruneAfterCachedMatch(level, func(key searchNodeKey) bool {
 					if visited.Has(key) {
 						return false
