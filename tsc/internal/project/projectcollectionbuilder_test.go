@@ -239,9 +239,9 @@ func TestProjectCollectionBuilder(t *testing.T) {
 		defer session.Close()
 		ctx := context.Background()
 		session.DidOpenFile(ctx, "file:///project/b/child/child.ts", 1, files["/project/b/child/child.ts"].(string), lsproto.LanguageKindTypeScript)
-		b := session.Snapshot().ProjectCollection.ConfiguredProject(utils.PathKey("/project/b/tsconfig.json"))
-		assert.Assert(t, b != nil)
-		assert.Assert(t, b.Program == nil)
+		registeredProject := session.Snapshot().ProjectCollection.ConfiguredProject(utils.PathKey("/project/b/tsconfig.json"))
+		assert.Assert(t, registeredProject != nil)
+		assert.Assert(t, registeredProject.Program == nil)
 
 		uri := lsproto.DocumentUri("file:///project/main.ts")
 		session.DidOpenFile(ctx, uri, 1, files["/project/main.ts"].(string), lsproto.LanguageKindTypeScript)

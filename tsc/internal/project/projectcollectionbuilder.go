@@ -1092,10 +1092,12 @@ func removeRedundantFindRequests(
 ) {
 	var redundantKeys []searchNodeKey
 	level.Range(func(key searchNodeKey, node searchNode) bool {
+		if key.loadKind != projectLoadKindFind {
+			return true
+		}
+		createKey := searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}
 		// Built projects can match at their earlier Find position.
-		if key.loadKind == projectLoadKindFind &&
-			level.Has(searchNodeKey{configFileName: key.configFileName, loadKind: projectLoadKindCreate}) &&
-			!keepFind(node) {
+		if level.Has(createKey) && !keepFind(node) {
 			redundantKeys = append(redundantKeys, key)
 		}
 		return true
@@ -1105,7 +1107,7 @@ func removeRedundantFindRequests(
 	}
 }
 
-// Earlier candidates can still win, so keep them in the parallel search.
+// Keep earlier candidates in the parallel search so they can still win.
 func pruneAfterCachedMatch(
 	level *core.BreadthFirstSearchLevel[searchNodeKey, searchNode],
 	isCachedMatch func(searchNodeKey) bool,
@@ -1120,7 +1122,7 @@ func pruneAfterCachedMatch(
 		}
 		return true
 	})
-	// Delete in reverse after traversal to avoid skipping entries and keep pruning linear.
+	// Collect before deleting to avoid skipping entries. Tail deletion keeps pruning linear.
 	for _, key := range slices.Backward(trailingKeys) {
 		level.Delete(key)
 	}
@@ -1140,6 +1142,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 		visited = &collections.SyncSet[searchNodeKey]{}
 	}
 
+	// A nil LogTree suppresses logging during cached-match checks.
 	configMayContainFile := func(config *tsoptions.ParsedCommandLine, logger *logging.LogTree) bool {
 		if len(config.FileNames()) == 0 {
 			// A solution config can still lead to a match through its references.
@@ -1231,7 +1234,7 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					}
 					createKey := searchNodeKey{configFileName: node.configFileName, loadKind: projectLoadKindCreate}
 					if !visited.Has(createKey) {
-						// Both jobs share one refresh and keep their own position and reference load kind.
+						// Share the refresh while preserving each job's position and reference load kind.
 						node.loadKind = projectLoadKindCreate
 						mixedVisits[node.configFileName] = sync.OnceValues(func() (bool, bool) { return visit(node) })
 					}
@@ -1243,15 +1246,22 @@ func (b *ProjectCollectionBuilder) findOrCreateDefaultConfiguredProjectWorker(
 					}
 					configPath := b.toPathKey(key.configFileName)
 					projectEntry, ok := b.configuredProjects.Load(ConfiguredProjectIDFromPathKey(configPath))
-					if !ok || projectEntry.Value().IsDirty() {
+					if !ok {
+						return false
+					}
+					project := projectEntry.Value()
+					if project.IsDirty() {
 						return false
 					}
 					configEntry, ok := b.configFileRegistryBuilder.configs.Load(configPath)
-					if !ok || configEntry.Value().pendingReload != PendingReloadNone {
+					if !ok {
 						return false
 					}
-					config := configEntry.Value().commandLine
-					project := projectEntry.Value()
+					cachedConfig := configEntry.Value()
+					if cachedConfig.pendingReload != PendingReloadNone {
+						return false
+					}
+					config := cachedConfig.commandLine
 					if config == nil || project.CommandLine != config {
 						return false
 					}
